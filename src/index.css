@@ -1,0 +1,44 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0a0a0c;
+  --color-paper: #f4f4f5;
+  /* rgba(255,255,255,0.1) flattened over ink — opaque so overlapping 1px rings don't double up */
+  --color-line: #232324;
+  --color-signal: #9b7fa8;
+  --color-cream: #fff1d3;
+  --color-charcoal: #22201f;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Wide tracking scale for uppercase labels and display type */
+  --tracking-spaced: 0.2em;
+  --tracking-spaced-sm: 0.1em;
+  --tracking-spaced-lg: 0.35em;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+  }
+}
