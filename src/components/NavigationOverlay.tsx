@@ -31,7 +31,7 @@ export function MenuToggle({ open, onToggle }: MenuToggleProps) {
       aria-expanded={open}
       aria-controls="navigation-overlay"
       aria-label={open ? 'Close menu' : 'Open menu'}
-      className="fixed top-5 right-6 z-50 flex items-center gap-3 text-xs uppercase tracking-spaced text-paper mix-blend-difference md:top-8 md:right-16"
+      className="group flex items-center gap-3 text-xs uppercase tracking-spaced text-paper"
     >
       <span className="relative block h-[1.2em] overflow-hidden">
         <motion.span

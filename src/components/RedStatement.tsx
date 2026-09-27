@@ -90,7 +90,7 @@ export const RedStatement = forwardRef<HTMLElement>((_props, forwardedRef) => {
         ))}
       </div>
 
-      <h2 className="relative w-full text-ink">
+      <h2 className="relative w-full text-[#231e25]">
         <span className="sr-only">It doesn’t have to be…</span>
         <motion.span aria-hidden className={`${LINE_CLASS} ml-[13vw] will-change-transform`} style={{ y: firstY }}>
           It doesn’t

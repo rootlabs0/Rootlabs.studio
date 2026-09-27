@@ -27,7 +27,7 @@ import { MorphingRings } from './MorphingRings'
 //                by scroll; the grid compresses and lands exactly as "Business" lands  (SHRINK)
 //    370–430vh   pause: heading rests at its final centred size (breathing room)
 //    430–466vh   subtext snaps in and pushes the heading left; "can be hard." settles
-//                left-aligned; the grid shifts by the same pixels — one shared value   (PUSH)
+//                left-aligned; the grid lines stay untouched                            (PUSH)
 //    466–496vh   hold
 
 const SCROLL_VH = 496 // total scroll distance while pinned; the section is this plus one viewport tall
@@ -45,7 +45,7 @@ const FILL_STARTS = [0.1, 0, 0.35, 0.6, 0.5, 0.25]
 const FILL_DURATION = 0.4
 
 const HEADLINE_CLASS =
-  'whitespace-nowrap text-[8.5vw] font-semibold leading-[0.95] tracking-tight md:text-7xl lg:text-[8.5rem]'
+  'whitespace-nowrap text-[7.225vw] font-semibold leading-[0.95] tracking-tight md:text-[3.825rem] lg:text-[7.225rem]'
 
 const WORDS = [
   { text: 'Scaling', line: 0 },
@@ -210,8 +210,8 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
   // incoming subtext push it: the block slides left and "can be hard." goes from centred to left-aligned.
   const headingX = useTransform([push, pushDistance, metricsVersion], ([t, d]: number[]) => -d * t)
   const secondLineX = useTransform([push, centreOffset, metricsVersion], ([t, c]: number[]) => c * (1 - t))
-  // The grid travels with the block, pixel for pixel, so lines and letters stay registered.
-  const gridShift = headingX
+  // The grid stays put while the push moves the heading: the lines are never shifted.
+  const gridShift = useMotionValue(0)
 
   const subtextOpacity = useTransform(push, [0, 0.2], [0, 1])
   const subtextX = useTransform(push, [0, 1], [40, 0])
@@ -320,7 +320,7 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
         <motion.div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-6 will-change-transform md:px-12">
           <motion.div
             ref={headingRef}
-            className="text-ink will-change-transform"
+            className="text-[#231e25] will-change-transform"
             style={{ x: headingX, y: headingY, visibility: headingVisibility }}
           >
             <div>

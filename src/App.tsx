@@ -1,14 +1,18 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useRef, useState } from 'react'
 import { AboutSection } from './components/AboutSection'
+import { FeatureStack } from './components/FeatureStack'
 import { FeaturesSection } from './components/FeaturesSection'
 import { KineticText } from './components/KineticText'
-import { MenuToggle, NavigationOverlay } from './components/NavigationOverlay'
+import { Navbar } from './components/Navbar'
+import { NetworkGrid } from './components/NetworkGrid'
+import { NavigationOverlay } from './components/NavigationOverlay'
 import { PixelCollage } from './components/PixelCollage'
 import { RedStatement } from './components/RedStatement'
 import { useHeroSlide } from './components/heroExit'
 import { ScrollProgression } from './components/ScrollProgression'
 import { SmoothScroll } from './components/SmoothScroll'
+import { TeamSection } from './components/TeamSection'
 import { TechText } from './components/TechText'
 
 const linear = (t: number) => t
@@ -59,10 +63,6 @@ function Hero() {
   )
 }
 
-// Two-step pixel notch on every corner of the Dashboard button, echoing the stepped collage frames.
-const DASHBOARD_CLIP =
-  'polygon(4px 0, calc(100% - 4px) 0, calc(100% - 4px) 2px, calc(100% - 2px) 2px, calc(100% - 2px) 4px, 100% 4px, 100% calc(100% - 4px), calc(100% - 2px) calc(100% - 4px), calc(100% - 2px) calc(100% - 2px), calc(100% - 4px) calc(100% - 2px), calc(100% - 4px) 100%, 4px 100%, 4px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 4px), 0 calc(100% - 4px), 0 4px, 2px 4px, 2px 2px, 4px 2px)'
-
 function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
@@ -70,43 +70,9 @@ function App() {
 
   return (
     <SmoothScroll>
-      <MenuToggle open={menuOpen} onToggle={() => setMenuOpen((open) => !open)} />
+      <Navbar menuOpen={menuOpen} onMenuToggle={() => setMenuOpen((open) => !open)} />
       <AnimatePresence>{menuOpen && <NavigationOverlay onClose={closeMenu} />}</AnimatePresence>
 
-      {/* Persistent brand bar: stays pinned bottom-left, always light, while the sections change behind it. */}
-      <div className="fixed bottom-6 left-6 z-30 flex items-stretch border border-charcoal bg-white text-charcoal md:left-12">
-        <span aria-hidden className="flex items-center border-r border-charcoal px-2.5">
-          {/* Split-circle mark: initials stacked either side of a rule. */}
-          <span className="relative grid size-11 place-items-center rounded-full border border-charcoal text-[0.7rem] leading-none">
-            <span className="absolute inset-x-0 top-1/2 h-px bg-charcoal" />
-            <span className="absolute top-[0.45rem]">R</span>
-            <span className="absolute bottom-[0.45rem]">L</span>
-          </span>
-        </span>
-        <a
-          href="#top"
-          className="flex items-center border-r border-charcoal px-3 text-xl font-semibold tracking-tight md:text-2xl"
-        >
-          Root Labs
-        </a>
-        <span className="flex items-center border-r border-charcoal px-3">
-          <a
-            href="#login"
-            className="rounded-full border border-charcoal px-3 py-0.5 text-sm transition-colors hover:bg-charcoal hover:text-white"
-          >
-            Login
-          </a>
-        </span>
-        <span className="flex items-center px-2.5">
-          <a
-            href="#dashboard"
-            className="bg-[#f36cf2] px-3 py-1.5 text-sm font-medium transition-[filter] hover:brightness-95 md:text-base"
-            style={{ clipPath: DASHBOARD_CLIP }}
-          >
-            Go to Dashboard
-          </a>
-        </span>
-      </div>
 
       <main>
         <ScrollProgression>
@@ -117,7 +83,13 @@ function App() {
 
         <AboutSection />
 
+        <TeamSection />
+
         <FeaturesSection />
+
+        <FeatureStack />
+
+        <NetworkGrid />
 
         {/* Positioned above the pinned stage so the page-wide grid lines run behind this text, not over it. */}
         <section data-snap="start" className="relative z-20 flex min-h-dvh items-center px-6 md:px-12">
