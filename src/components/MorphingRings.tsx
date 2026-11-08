@@ -185,15 +185,19 @@ export function MorphingRings({
     (t) => `linear-gradient(to right, transparent ${15 * (1 - t)}%, black ${65 * (1 - t)}%)`,
   )
 
+  // The svg box includes the overscan: a CSS mask clips to the element's box, so cords that merely overflowed a
+  // viewport-sized box were cut at its edges and the layer's parallax offset exposed their ends.
+  const over = OVERSCAN * h
+
   return (
     <motion.svg
       aria-hidden
-      className="pointer-events-none absolute inset-0 overflow-visible"
+      className="pointer-events-none absolute left-0 overflow-visible"
       width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
+      height={h + 2 * over}
+      viewBox={`0 ${-over} ${w} ${h + 2 * over}`}
       fill="none"
-      style={{ maskImage, WebkitMaskImage: maskImage }}
+      style={{ top: -over, maskImage, WebkitMaskImage: maskImage }}
     >
       <motion.path d={d2} style={{ stroke, opacity: opacity2 }} strokeWidth={strokeWidth} strokeLinejoin="round" />
       <motion.path d={d1} style={{ stroke, opacity: opacity1 }} strokeWidth={strokeWidth} strokeLinejoin="round" />

@@ -1,33 +1,22 @@
-import { motion, useReducedMotion, useScroll, useTransform, type MotionValue } from 'framer-motion'
+import { motion, useReducedMotion, useScroll, useTransform } from 'framer-motion'
 import { forwardRef, useRef } from 'react'
-import { COMPRESSED_LINES, COMPRESS_GAP, COLUMNS } from './gridLayout'
 import { DEPTH } from './parallax'
 
-// 15% ink flattened over --color-signal (washed purple): opaque, so it matches the page-wide line layer exactly.
-const LINE_ON_RED = '#7a5f80'
-
-// The grid band narrows by this share of the viewport width as the next (beige) section scrolls in.
-const TIGHTEN_VW = 8
-const BAND_VW = (COLUMNS - 1) * COMPRESS_GAP // span between the first and last line
-const SCALE = (BAND_VW - TIGHTEN_VW) / BAND_VW
-const CENTER_VW = COMPRESSED_LINES[0] + BAND_VW / 2
-
-// `left` stays static; the movement is a translateX, so tightening the band never triggers layout.
-function GridLine({ left, progress }: { left: number; progress: MotionValue<number> }) {
-  const x = useTransform(progress, [0, 1], ['0vw', `${(CENTER_VW + (left - CENTER_VW) * SCALE - left).toFixed(3)}vw`])
-  return (
-    <motion.div
-      className="absolute inset-y-0 w-px will-change-transform"
-      style={{ left: `${left}vw`, x, backgroundColor: LINE_ON_RED }}
-    />
-  )
-}
+// The feathered leading edge: how far this section's colour bleeds up over the stage at full stretch, and the
+// share of the section's entry over which it stretches out to that height. Invisible while both share a colour.
+const FEATHER_VH = 45
+const FEATHER_GROWN = 0.45
+// Smoothstep alpha ramp sampled into stops: a plain two-stop ramp shows a faint band where its slope starts and ends.
+const FEATHER_MASK = `linear-gradient(to bottom, ${Array.from({ length: 11 }, (_, i) => {
+  const t = i / 10
+  return `rgb(0 0 0 / ${(t * t * (3 - 2 * t)).toFixed(3)}) ${t * 100}%`
+}).join(', ')})`
 
 const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1)
 
 // Entry windows, as shares of the section's entry (0 = top edge at the viewport bottom, 1 = locked at the top).
 // Short windows (0.4 each, vs 0.85 originally), so the rise itself is about twice as fast. They start late on
-// purpose: the lines stay below the viewport until the previous section's heading has fully left (≈538vh of
+// purpose: the lines stay below the viewport until the previous section's heading has fully left (≈398vh of
 // page scroll), keeping the two headings from ever being on screen together.
 const FIRST_RISE: [number, number] = [0.35, 0.75]
 const SECOND_RISE: [number, number] = [0.45, 0.85]
@@ -77,28 +66,43 @@ export const RedStatement = forwardRef<HTMLElement>((_props, forwardedRef) => {
     ([enter, exit]: number[]) => `${riseVh * riseLeft(enter, SECOND_RISE) + secondDrift * exit}vh`,
   )
 
+  // The feather stretches up from nothing as the section starts to rise, so the stage is untouched while it is
+  // still pinned and the edge is soft from the first pixel of this section.
+  const featherScale = useTransform(scrollYProgress, [0, FEATHER_GROWN], [0, 1])
+
   return (
-    <section
-      ref={internalRef}
-      data-snap="start"
-      data-scroll-lock
-      className="relative z-20 flex min-h-dvh items-center overflow-hidden bg-signal pb-16"
-    >
-      <div aria-hidden className="pointer-events-none absolute inset-0">
-        {COMPRESSED_LINES.map((left) => (
-          <GridLine key={left} left={left} progress={exitProgress} />
-        ))}
+    <>
+      {/* Feathered leading edge, outside the section's overflow clip: this section's own background, masked out to
+          nothing towards the top. Where it is see-through the stage shows through, so the colour blends from the
+          stage's to this section's. Zero-height, so it adds no scroll distance. */}
+      <div aria-hidden className="pointer-events-none relative z-20 h-0">
+        <motion.div
+          className="absolute inset-x-0 -bottom-px origin-bottom bg-ink will-change-transform"
+          style={{
+            height: `${FEATHER_VH}vh`,
+            scaleY: featherScale,
+            maskImage: FEATHER_MASK,
+            WebkitMaskImage: FEATHER_MASK,
+          }}
+        />
       </div>
 
-      <h2 className="relative w-full text-[#231e25]">
-        <span className="sr-only">It doesn’t have to be…</span>
-        <motion.span aria-hidden className={`${LINE_CLASS} ml-[13vw] will-change-transform`} style={{ y: firstY }}>
-          It doesn’t
-        </motion.span>
-        <motion.span aria-hidden className={`${LINE_CLASS} ml-[36.5vw] will-change-transform`} style={{ y: secondY }}>
-          have to be…
-        </motion.span>
-      </h2>
-    </section>
+      <section
+        ref={internalRef}
+        data-snap="start"
+        data-scroll-lock
+        className="relative z-20 flex min-h-svh items-center overflow-hidden bg-ink pb-16"
+      >
+        <h2 className="relative w-full text-paper">
+          <span className="sr-only">It doesn’t have to be…</span>
+          <motion.span aria-hidden className={`${LINE_CLASS} ml-[13vw] will-change-transform`} style={{ y: firstY }}>
+            It doesn’t
+          </motion.span>
+          <motion.span aria-hidden className={`${LINE_CLASS} ml-[36.5vw] will-change-transform`} style={{ y: secondY }}>
+            have to be…
+          </motion.span>
+        </h2>
+      </section>
+    </>
   )
 })

@@ -13,6 +13,8 @@ const speedRamp = cubicBezier(0.76, 0, 0.24, 1)
 
 // Locked entrance (see below).
 const LOCK_DURATION = 1.75 // s
+// Glide to an in-page link's target; longer than a snap since it can cross several screens.
+const ANCHOR_DURATION = 1.8 // s
 // How far above the trigger a downward scroll may start and still be captured (fraction of a viewport).
 // Covers the stage's final hold, where nothing animates, so no scrubbed frames are skipped.
 const LOCK_CATCH_ZONE = 0.3
@@ -99,7 +101,7 @@ export function SmoothScroll({ children }: SmoothScrollProps) {
     // tall scroll-scrubbed stage). Elements opt in with data-snap="start" (snap to their top) or "end" (the
     // tall stage: snap to where its last screen is showing, when scrolling up into it). Once scrolling goes
     // quiet, snapTarget.ts decides where to rest and Lenis glides there on the speed ramp. Touch scrolling is
-    // left to the browser.
+    // left to the browser entirely: no snapping, no locked entrance (see onVirtualScroll).
     const readPoints = (): SnapPoint[] =>
       Array.from(document.querySelectorAll<HTMLElement>('[data-snap]'), (el) => {
         const rect = el.getBoundingClientRect()
@@ -136,11 +138,53 @@ export function SmoothScroll({ children }: SmoothScrollProps) {
       clearTimeout(idleTimer)
       idleTimer = setTimeout(settle, 100)
     }
+    // Hands any programmatic glide (snap, anchor link, locked entrance) back to the user on the spot, so a finger
+    // never has to fight Lenis writing the scroll position under it.
+    const cancelGlide = () => {
+      lenis.stop()
+      lenis.start()
+      snapping = false
+      locking = false
+      releaseAt = 0
+      origin = lenis.scroll
+    }
     const onVirtualScroll = ({ event }: { event: Event }) => {
-      touching = event.type === 'touchmove'
+      // The input that last moved the page decides whether it snaps. Every touch event counts, touchend included:
+      // the native momentum that follows a swipe belongs to the touch, so it must not snap once it settles. Only a
+      // wheel gesture switches snapping back on.
+      touching = event.type.startsWith('touch')
+      if (event.type === 'touchstart' && (snapping || locking)) cancelGlide()
     }
     lenis.on('scroll', onScroll)
     lenis.on('virtual-scroll', onVirtualScroll)
+
+    // In-page links (#work, …) glide to their target on the speed ramp instead of jumping. Taking over the click
+    // also keeps the snap bookkeeping honest: the glide's end is the new resting point. Links without a matching
+    // element are left to the browser.
+    const onAnchorClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const hash = (event.target as Element).closest<HTMLAnchorElement>('a[href^="#"]')?.getAttribute('href')
+      const target = hash && hash.length > 1 ? document.getElementById(decodeURIComponent(hash.slice(1))) : null
+      if (!target) return
+
+      event.preventDefault()
+      // A locked entrance is mid-glide: starting another here would leave `locking` stuck on.
+      if (locking) return
+      const top = target.getBoundingClientRect().top + window.scrollY
+      snapping = true
+      clearTimeout(idleTimer)
+      lenis.scrollTo(top, {
+        duration: ANCHOR_DURATION,
+        easing: speedRamp,
+        lock: true,
+        force: true,
+        onComplete: () => {
+          snapping = false
+          origin = top
+        },
+      })
+    }
+    document.addEventListener('click', onAnchorClick)
 
     let rafId = 0
     const raf = (time: number) => {
@@ -150,6 +194,7 @@ export function SmoothScroll({ children }: SmoothScrollProps) {
     rafId = requestAnimationFrame(raf)
 
     return () => {
+      document.removeEventListener('click', onAnchorClick)
       cancelAnimationFrame(rafId)
       clearTimeout(idleTimer)
       lenis.destroy()

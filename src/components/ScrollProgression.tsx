@@ -2,50 +2,54 @@ import {
   cubicBezier,
   easeInOut,
   motion,
+  useInView,
   useReducedMotion,
   useScroll,
-  useSpring,
   useTransform,
   useMotionValue,
-  useVelocity,
   type MotionValue,
+  type Variants,
 } from 'framer-motion'
-import { Fragment, useLayoutEffect, useRef, type ReactNode, type Ref, type RefObject } from 'react'
-import { COLUMNS, COLUMN_WIDTH, COMPRESS_GAP, COMPRESS_START } from './gridLayout'
+import { Fragment, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react'
+import { COLUMNS, COMPRESS_GAP, COMPRESS_START } from './gridLayout'
 import { wordOffset, type HeadingMetrics } from './headingLayout'
-import { HeroExitContext } from './heroExit'
 import { MorphingRings } from './MorphingRings'
 
-// One pinned stage, one scroll timeline. Phases are authored in vh of scroll distance so lengthening one
-// phase doesn't stretch the others; they are converted to scroll progress (0 → 1) below.
-//      0–80vh    hero headline slides off to the left                                  (HERO_EXIT)
-//     10–110vh   hero rings straighten into the column grid lines                      (MORPH)
-//    110–200vh   columns fill red bottom-up; background locks red                      (FILL)
-//    200–250vh   heading elevates from below the stage, oversized, both lines centred  (ENTER)
-//    250–260vh   hold at peak size
-//    260–370vh   words shrink to final size strictly one after another, scrubbed directly
+// One pinned stage, one scroll timeline. The stage scrolls up into view below the hero like any section,
+// carrying the heading (oversized, both lines centred), and pins once it fills the viewport. Phases are
+// authored in vh of pinned scroll distance so lengthening one phase doesn't stretch the others; they are
+// converted to scroll progress (0 → 1) below.
+//      0–10vh    hold at peak size
+//     10–120vh   words shrink to final size strictly one after another, scrubbed directly
 //                by scroll; the grid compresses and lands exactly as "Business" lands  (SHRINK)
-//    370–430vh   pause: heading rests at its final centred size (breathing room)
-//    430–466vh   subtext snaps in and pushes the heading left; "can be hard." settles
+//    120–180vh   pause: heading rests at its final centred size (breathing room)
+//    180–216vh   subtext snaps in and pushes the heading left; "can be hard." settles
 //                left-aligned; the grid lines stay untouched                            (PUSH)
-//    466–496vh   hold
+//    216–246vh   hold
 
-const SCROLL_VH = 496 // total scroll distance while pinned; the section is this plus one viewport tall
+const SCROLL_VH = 246 // total scroll distance while pinned; the section is this plus one viewport tall
 const phase = (fromVh: number, toVh: number): [number, number] => [fromVh / SCROLL_VH, toVh / SCROLL_VH]
 
-const HERO_EXIT = phase(0, 80)
-const MORPH = phase(10, 110)
-const FILL = phase(110, 200)
-const ENTER = phase(200, 250)
-const SHRINK = phase(260, 370)
-const PUSH = phase(430, 466)
+const SHRINK = phase(10, 120)
+const PUSH = phase(180, 216)
 
-// Fill offsets within FILL, slightly irregular so the columns read as a skyline, not a wipe.
-const FILL_STARTS = [0.1, 0, 0.35, 0.6, 0.5, 0.25]
-const FILL_DURATION = 0.4
+// Grid line tone (--color-line).
+const LINE_COLOR = '#232324'
 
+// The hero's gradient carries on down the stage. It starts on --color-dusk, exactly where the hero's sky ends, and
+// drains back to ink over the pinned scroll: quickly at first, matching the hero's own falloff at the seam, then a
+// long tail, so the stage hands over seamlessly to the ink sections below. It sits on the tall outer box rather
+// than the pinned stage, so while the heading is pinned the gradient keeps scrolling past behind it.
+const DUSK_STOPS = [0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1]
+const STAGE_BACKGROUND = `linear-gradient(to bottom, ${DUSK_STOPS.map(
+  (t) => `color-mix(in srgb, var(--color-dusk) ${(100 * (1 - t) ** 2).toFixed(1)}%, var(--color-ink)) ${(t * SCROLL_VH).toFixed(1)}vh`,
+).join(', ')})`
+
+// Line 1 is ~9.1em wide; from lg, line 2 (~5.8em) plus the subtext hanging off it (2rem gap + 24rem) must also fit
+// between the 3rem gutters, so below ~1200px the size scales with the viewport instead of overflowing it. Phones
+// and tablets stack the subtext under line 2, so only line 1 has to fit (~80% of a phone's width).
 const HEADLINE_CLASS =
-  'whitespace-nowrap text-[7.225vw] font-semibold leading-[0.95] tracking-tight md:text-[3.825rem] lg:text-[7.225rem]'
+  'whitespace-nowrap text-[8.4vw] font-semibold leading-[0.95] tracking-tight md:text-[3.825rem] lg:text-[length:min(7.225rem,calc((100vw_-_33rem)/5.82))]'
 
 const WORDS = [
   { text: 'Scaling', line: 0 },
@@ -69,6 +73,31 @@ const wordEase = cubicBezier(0.32, 0, 0.67, 0)
 // Ease-in-out quart for the subtext push: a pronounced speed ramp (slow → fast → slow).
 const pushRamp = cubicBezier(0.76, 0, 0.24, 1)
 
+// Entrance: the first time the stage comes into view (or straight away if the page loads with it on screen),
+// each word rises into place from behind a mask, one after another. It is time-based and runs on an inner layer
+// of each word, so the scroll-driven scale/offset on the word itself is never touched and simply carries on once
+// the word has landed. Same curve as the hero's entrance.
+const ENTRANCE_EASE = [0.22, 1, 0.36, 1] as const
+const ENTRANCE_DURATION = 1.1 // s per word
+const ENTRANCE_STAGGER = 0.07 // s between consecutive words
+// Clip window for the reveal: the word's own box, padded so ascenders, descenders and side bearings are never cut.
+// The rising text starts fully below its bottom edge. Removed once the word has landed.
+const ENTRANCE_MASK = 'inset(-0.5em -0.25em -0.2em -0.25em)'
+// When the entrance fires: as soon as the top of the stage has scrolled into view, i.e. right as the hero starts to
+// leave. The stage sits directly under the full-height hero, so its top edge touches the viewport's bottom edge at
+// scroll 0; this small inset keeps it from firing on page load before the user has scrolled at all. (The heading
+// itself is centred in the stage, so it only reaches the viewport a little later — raise the inset to start the
+// rise later, lower it to start sooner.)
+const ENTRANCE_TRIGGER_INSET = '4%'
+const wordEntrance: Variants = {
+  hidden: { y: '130%', opacity: 0 },
+  shown: (index: number) => ({
+    y: '0%',
+    opacity: 1,
+    transition: { duration: ENTRANCE_DURATION, delay: index * ENTRANCE_STAGGER, ease: ENTRANCE_EASE },
+  }),
+}
+
 // Scale for one word, scrubbed straight from scroll: no spring, no timing of its own.
 function useWordShrink(
   shrink: MotionValue<number>,
@@ -85,24 +114,15 @@ function useWordShrink(
 
 const clamp01 = (t: number) => Math.min(Math.max(t, 0), 1)
 
-function mixHex(a: string, b: string, t: number) {
-  const channel = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16)
-  const mixed = [0, 1, 2].map((i) => Math.round(channel(a, i) + (channel(b, i) - channel(a, i)) * t))
-  return `rgb(${mixed.join(', ')})`
-}
-
-// The heading's vertical path, in vh of scroll → vh of translateY, from its entrance to past the stage exit.
-// One continuous curve with no flat stretches, so every bit of scroll moves it:
-//   approach   (ENTER):      rises from below the viewport fast, decelerating smoothly into…
+// The heading's vertical path while pinned, in vh of scroll → vh of translateY, to past the stage exit. Before
+// the stage pins, the page itself carries the heading up into view. From there, one continuous curve:
 //   crawl      (content):    a slow upward drift through shrink, pause and push whose speed dips to its minimum
 //                            at the focal centre (it never reaches zero) and picks back up toward the end;
 //   departure  (stage exit): accelerates away upward, so it has cleared the viewport before the next section's
 //                            heading comes into view.
-// Joints are velocity-matched, so the motion stays fluid from frame to frame.
-const PATH_ENTER_FROM = 200
-const PATH_ENTER_TO = 250
+// The joint is velocity-matched, so the motion stays fluid from frame to frame.
 const PATH_EXIT_FROM = SCROLL_VH // the stage starts scrolling away here
-const PATH_FOCUS = (PATH_ENTER_TO + PATH_EXIT_FROM) / 2
+const PATH_FOCUS = PATH_EXIT_FROM / 2
 const CRAWL_MIN = 0.02 // vh moved per vh scrolled at the focal centre
 const CRAWL_EDGE = 0.06 // …and at either end of the crawl, where it hands over to approach / departure
 const CRAWL_CURVE = (CRAWL_EDGE - CRAWL_MIN) / (PATH_EXIT_FROM - PATH_FOCUS) ** 2
@@ -111,76 +131,36 @@ const DEPART_ACCEL = 0.008 // quadratic term of the departure
 const crawl = (s: number) => -(CRAWL_MIN * (s - PATH_FOCUS) + (CRAWL_CURVE * (s - PATH_FOCUS) ** 3) / 3)
 
 function headingPathVh(s: number) {
-  if (s <= PATH_ENTER_FROM) return 100
-  if (s <= PATH_ENTER_TO) {
-    // Cubic ease-out from 100vh, riding on top of the crawl so its final velocity equals the crawl's.
-    const u = (s - PATH_ENTER_FROM) / (PATH_ENTER_TO - PATH_ENTER_FROM)
-    return crawl(s) + (100 - crawl(PATH_ENTER_FROM)) * (1 - u) ** 3
-  }
-  if (s <= PATH_EXIT_FROM) return crawl(s)
+  if (s <= PATH_EXIT_FROM) return crawl(Math.max(s, 0))
   const d = s - PATH_EXIT_FROM
   return Math.max(crawl(PATH_EXIT_FROM) - CRAWL_EDGE * d - DEPART_ACCEL * d * d, -150)
 }
 
-type ScrollProgressionProps = {
-  /** Content shown on the stage before the red takes over (the hero). */
-  children: ReactNode
-}
-
-export function ScrollProgression({ children }: ScrollProgressionProps) {
+export function ScrollProgression() {
   const ref = useRef<HTMLDivElement>(null)
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] })
 
-  const heroExit = useTransform(scrollYProgress, HERO_EXIT, [0, 1])
-  const morph = useTransform(scrollYProgress, MORPH, [0, 1])
-  const fill = useTransform(scrollYProgress, FILL, [0, 1])
-
-  // Background is driven by the same `fill` value as the columns, so it locks red exactly as the last column lands.
-  const backgroundColor = useTransform(fill, [0.75, 1], ['#0a0a0c', '#9b7fa8'])
-  // The line layer is viewport-fixed, so it outlives the pinned stage. The red section below the stage draws
-  // its own lines over this layer, so the fixed lines only need to return to --color-line (the page's grid on
-  // dark) once the stage has fully left — otherwise dark lines would flash across the leaving red stage.
+  // The line layer is viewport-fixed, so it outlives the pinned stage. It stays hidden while the stage is pinned
+  // and only comes back once the stage has fully left, as straight lines for the page's grid on the sections below.
   const { scrollYProgress: stageExit } = useScroll({ target: ref, offset: ['end end', 'end start'] })
-  // Line colour: --color-line on the dark hero, 15% ink flattened over red (both opaque, so overlaps never double up).
-  const lineColor = useTransform([fill, stageExit], ([f, exit]: number[]) =>
-    mixHex('#232324', '#7a5f80', clamp01((f - 0.6) / 0.4) * (1 - clamp01((exit - 0.95) / 0.05))),
-  )
-  const heroVisibility = useTransform(heroExit, (v) => (v < 1 ? 'visible' : 'hidden'))
+  const linesOpacity = useTransform(stageExit, (exit) => clamp01((exit - 0.95) / 0.05))
+  const straightLines = useMotionValue(1)
+  const lineWidth = useMotionValue(1)
+  const lineColor = useMotionValue(LINE_COLOR)
 
-  // Parallax depth. The line layer is the deepest plane: while its cords are still curved (the only time a
-  // vertical shift is visible on it), it creeps upward at a fraction of scroll speed. The straight lines
-  // overscan the viewport by 22%, so the offset never exposes an end.
   const still = useReducedMotion() ?? false
-  const linesY = useTransform(scrollYProgress, [0, MORPH[1]], ['0vh', still ? '0vh' : '-6vh'])
   // The heading's own path (headingPathVh) handles its exit: it accelerates away instead of lagging, so it is
   // gone before the next section's heading comes into view.
-
-  // Scroll velocity thickens the grid lines while moving and relaxes them at rest.
-  const velocity = useSpring(useVelocity(scrollYProgress), { stiffness: 300, damping: 40 })
-  // Full stretch at ~3 viewports/second, independent of how long the section is.
-  const fastScroll = 300 / SCROLL_VH
-  // Rounded to 0.5px steps: stroke-width is an SVG geometry attribute, so every change re-lays-out the paths.
-  // A MotionValue only notifies when its value actually changes, so this touches the DOM a handful of times
-  // per gesture instead of on every frame, with the same visible thickening.
-  const lineStretch = useTransform(velocity, (v) => {
-    const t = Math.min(Math.abs(v) / fastScroll, 1)
-    return Math.round((1 + 3 * t) * 2) / 2
-  })
 
   const shrink = useTransform(scrollYProgress, SHRINK, [0, 1])
 
   // Speed ramp: eases off the mark, accelerates hard through the middle, then brakes into the final layout.
   const push = useTransform(scrollYProgress, PUSH, [0, 1], { ease: pushRamp })
 
-  // Smooth elevation from below the stage — no pop, no fade. Hidden until it starts so nothing peeks.
-  const headingY = useTransform([scrollYProgress, stageExit], ([p, exit]: number[]) => {
-    const s = p * SCROLL_VH + exit * 100
-    // Reduced motion: keep only the entrance (as a straight rise), no crawl or departure.
-    if (still)
-      return `${s < PATH_ENTER_TO ? 100 * (1 - Math.max(0, (s - PATH_ENTER_FROM) / (PATH_ENTER_TO - PATH_ENTER_FROM))) : 0}vh`
-    return `${headingPathVh(s)}vh`
-  })
-  const headingVisibility = useTransform(scrollYProgress, (v) => (v > ENTER[0] ? 'visible' : 'hidden'))
+  // Reduced motion: the heading just rides with the page, no crawl or departure.
+  const headingY = useTransform([scrollYProgress, stageExit], ([p, exit]: number[]) =>
+    still ? '0vh' : `${headingPathVh(p * SCROLL_VH + exit * 100)}vh`,
+  )
 
   // Layout-driven values, measured from untransformed layout boxes (offset* ignores transforms).
   const firstLineRef = useRef<HTMLDivElement>(null)
@@ -192,6 +172,8 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
   const oversize = useMotionValue(1.4) // peak scale: widest line fills the space between the side gutters
   const centreOffset = useMotionValue(0) // px that centre "can be hard." under the first line
   const pushDistance = useMotionValue(0) // px the finished heading moves left so heading + subtext sit centred
+  // Fires once, as the top of the stage scrolls into view (see ENTRANCE_TRIGGER_INSET).
+  const headingInView = useInView(ref, { once: true, margin: `0px 0px -${ENTRANCE_TRIGGER_INSET} 0px` })
 
   // One scroll-linked scale per word (fixed six-word heading, so fixed hook calls).
   const wordScales = [
@@ -244,7 +226,7 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
       const gutter = parseFloat(getComputedStyle(block.parentElement!).paddingLeft) || 0
       oversize.set((window.innerWidth - gutter * 2) / lineWidths[0])
       centreOffset.set(lineTwoOffset)
-      // The subtext hangs off the right of line two (absolute on desktop, stacked below on mobile).
+      // The subtext hangs off the right of line two (absolute on desktop, stacked below on phones and tablets).
       const groupWidth = Math.max(lineWidths[0], subtext.offsetLeft + subtext.offsetWidth)
       pushDistance.set((groupWidth - lineWidths[0]) / 2)
       // Bump last, and always: MotionValue.set() with an unchanged value doesn't notify, and StrictMode's
@@ -277,33 +259,32 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
               oversize={oversize}
               metricsRef={metricsRef}
               metricsVersion={metricsVersion}
+              revealed={still || headingInView}
+              still={still}
             />
           </Fragment>
         ),
     )
 
   return (
-    <div ref={ref} data-snap="end" style={{ height: `${SCROLL_VH + 100}vh` }} className="relative">
-      <motion.div className="sticky top-0 isolate h-dvh overflow-hidden" style={{ backgroundColor }}>
-        {/* Negative z: paints above the stage's background colour but below the z-0 line layer. */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-          {Array.from({ length: COLUMNS }, (_, i) => (
-            <ColumnPanel key={i} index={i} shrink={gridCompress} shift={gridShift} fill={fill} />
-          ))}
-        </div>
-
-        {/* One continuous, viewport-fixed line layer for the whole page: hero rings → grid lines. Fixed (not
-            absolute) so the stage's overflow never clips it; it stays in the stage's stacking context so it
-            paints above the red panels and below the headings. */}
+    <div
+      ref={ref}
+      data-snap="end"
+      style={{ height: `${SCROLL_VH + 100}vh`, backgroundColor: 'var(--color-ink)', backgroundImage: STAGE_BACKGROUND }}
+      className="relative"
+    >
+      <div className="sticky top-0 isolate h-dvh overflow-hidden">
+        {/* Viewport-fixed grid lines for the page below the stage. Fixed (not absolute) so the stage's overflow
+            never clips them; they stay in the stage's stacking context so they paint below the headings. */}
         <motion.div
           aria-hidden
-          className="pointer-events-none fixed inset-0 z-0 h-screen w-screen overflow-visible will-change-transform"
-          style={{ y: linesY }}
+          className="pointer-events-none fixed inset-0 z-0 h-screen w-screen overflow-visible"
+          style={{ opacity: linesOpacity }}
         >
           <MorphingRings
-            morph={morph}
+            morph={straightLines}
             columns={COLUMNS}
-            strokeWidth={lineStretch}
+            strokeWidth={lineWidth}
             stroke={lineColor}
             compress={gridCompress}
             shift={gridShift}
@@ -312,17 +293,8 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
           />
         </motion.div>
 
-        <motion.div className="absolute inset-0 z-[16]" style={{ visibility: heroVisibility }}>
-          <HeroExitContext.Provider value={heroExit}>{children}</HeroExitContext.Provider>
-        </motion.div>
-
-        {/* Click-through: this full-screen layer sits above the hero, whose heading is interactive. */}
         <motion.div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-6 will-change-transform md:px-12">
-          <motion.div
-            ref={headingRef}
-            className="text-[#231e25] will-change-transform"
-            style={{ x: headingX, y: headingY, visibility: headingVisibility }}
-          >
+          <motion.div ref={headingRef} className="text-paper will-change-transform" style={{ x: headingX, y: headingY }}>
             <div>
               <h2 className="sr-only">Scaling your business can be a grind</h2>
               <div ref={firstLineRef} aria-hidden className={`${HEADLINE_CLASS} relative w-fit`}>
@@ -332,10 +304,11 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
                 <div aria-hidden className={`${HEADLINE_CLASS} relative`}>
                   {renderLine(1)}
                 </div>
-                {/* Out of flow on desktop so the heading block (and its measurements) is only as wide as the headline. */}
+                {/* Out of flow on desktop so the heading block (and its measurements) is only as wide as the headline.
+                    Phones and tablets have no room beside line 2, so it stacks below. */}
                 <motion.p
                   ref={subtextRef}
-                  className="mt-6 max-w-[70vw] text-lg leading-snug text-ink/85 md:absolute md:bottom-3 md:left-full md:mt-0 md:ml-8 md:w-96 md:text-2xl"
+                  className="mt-6 max-w-[70vw] text-lg leading-snug text-paper/85 md:max-w-96 md:text-2xl lg:absolute lg:bottom-3 lg:left-full lg:mt-0 lg:ml-8 lg:w-96 lg:max-w-none"
                   style={{ opacity: subtextOpacity, x: subtextX }}
                 >
                   Growing digital infrastructure is hard, and the roots run deep…
@@ -344,37 +317,8 @@ export function ScrollProgression({ children }: ScrollProgressionProps) {
             </div>
           </motion.div>
         </motion.div>
-      </motion.div>
+      </div>
     </div>
-  )
-}
-
-type ColumnPanelProps = {
-  index: number
-  shrink: MotionValue<number>
-  shift: MotionValue<number>
-  fill: MotionValue<number>
-}
-
-// A red panel: fills bottom-up, then compresses into a narrow centred rhythm in lockstep with the heading
-// (`shrink`) and shifts with it (`shift`, px). Its lines live in the shared MorphingRings layer.
-function ColumnPanel({ index, shrink: compressT, shift, fill }: ColumnPanelProps) {
-  const x = useTransform([compressT, shift], ([t, px]: number[]) => {
-    const from = index * COLUMN_WIDTH
-    return `calc(${from + (COMPRESS_START + index * COMPRESS_GAP - from) * t}vw + ${px}px)`
-  })
-  const scaleX = useTransform(compressT, [0, 1], [1, COMPRESS_GAP / COLUMN_WIDTH])
-
-  const fillStart = FILL_STARTS[index] ?? 0
-  const panelScaleY = useTransform(fill, [fillStart, fillStart + FILL_DURATION], [0, 1], { ease: easeInOut })
-
-  return (
-    <motion.div
-      className="absolute inset-y-0 left-0 origin-left will-change-transform"
-      style={{ x, scaleX, width: `${COLUMN_WIDTH}vw` }}
-    >
-      <motion.div className="size-full origin-bottom bg-signal" style={{ scaleY: panelScaleY }} />
-    </motion.div>
   )
 }
 
@@ -386,25 +330,38 @@ type WordProps = {
   oversize: MotionValue<number>
   metricsRef: RefObject<HeadingMetrics | null>
   metricsVersion: MotionValue<number>
+  revealed: boolean // play the entrance
+  still: boolean // reduced motion: no entrance, the word is simply there
 }
 
 // One word of the heading: scales with scroll on its own window and moves from its peak box to its final
 // box around the heading's fixed anchor (see headingLayout.ts). Larger words stack above smaller ones, so a word
 // that has already shrunk tucks underneath a neighbour that is still oversized.
-function Word({ ref, index, text, scales, oversize, metricsRef, metricsVersion }: WordProps) {
+function Word({ ref, index, text, scales, oversize, metricsRef, metricsVersion, revealed, still }: WordProps) {
   const scale = scales[index]
   const inputs = [metricsVersion, oversize, scale]
   const x = useTransform(inputs, ([, peak, s]: number[]) => wordOffset(metricsRef.current, s, peak, index).x)
   const y = useTransform(inputs, ([, peak, s]: number[]) => wordOffset(metricsRef.current, s, peak, index).y)
   const zIndex = useTransform(scale, (s) => Math.round(s * 1000))
+  // The reveal mask only exists while the word is entering; afterwards the word is exactly as before.
+  const [masked, setMasked] = useState(!still)
 
   return (
     <motion.span
       ref={ref}
       className="relative inline-block origin-bottom-left align-bottom will-change-transform"
-      style={{ x, y, scale, zIndex }}
+      style={{ x, y, scale, zIndex, clipPath: masked && !still ? ENTRANCE_MASK : undefined }}
     >
-      {text}
+      <motion.span
+        className="inline-block"
+        custom={index}
+        variants={wordEntrance}
+        initial={still ? false : 'hidden'}
+        animate={revealed ? 'shown' : 'hidden'}
+        onAnimationComplete={(definition) => definition === 'shown' && setMasked(false)}
+      >
+        {text}
+      </motion.span>
     </motion.span>
   )
 }

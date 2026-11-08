@@ -2,7 +2,7 @@ import { MenuToggle } from './NavigationOverlay'
 
 const LINKS = [
   { label: 'Work', href: '#work' },
-  { label: 'About', href: '#about' },
+  { label: 'About', href: '#team' },
   { label: 'Contact', href: '#contact' },
 ]
 
@@ -18,15 +18,7 @@ export function Navbar({ menuOpen, onMenuToggle }: NavbarProps) {
       {/* Tint + blur live on their own layer so they never affect the text's stacking. */}
       <div aria-hidden className="absolute inset-0 bg-ink/50 backdrop-blur-md" />
 
-      <div className="relative flex items-center justify-between px-6 py-5 md:px-12 md:py-6">
-        <a
-          href="#top"
-          aria-label="Rootlabs home"
-          className="text-xs font-medium uppercase tracking-spaced text-paper transition-opacity duration-300 hover:opacity-70 md:text-sm"
-        >
-          ROOT<span className="text-zinc-500">LABS</span>
-        </a>
-
+      <div className="relative flex items-center justify-center px-6 py-5 md:px-12 md:py-6">
         <div className="flex items-center gap-6 md:gap-10">
           <nav
             aria-label="Sections"
@@ -38,7 +30,7 @@ export function Navbar({ menuOpen, onMenuToggle }: NavbarProps) {
                 key={link.href}
                 href={link.href}
                 tabIndex={menuOpen ? -1 : undefined}
-                className="group relative py-1 text-xs uppercase tracking-spaced text-paper/60 transition-colors duration-300 hover:text-paper focus-visible:text-paper"
+                className="hit-area group py-1 text-xs uppercase tracking-spaced text-paper/60 transition-colors duration-300 hover:text-paper focus-visible:text-paper"
               >
                 {link.label}
                 <span className="absolute inset-x-0 bottom-0 h-px origin-left scale-x-0 bg-current transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-x-100 group-focus-visible:scale-x-100" />

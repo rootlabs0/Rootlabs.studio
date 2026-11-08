@@ -1,22 +1,16 @@
 import { motion, useReducedMotion, type Variants } from 'framer-motion'
 import { useEffect, useRef } from 'react'
+import { EMAIL, SOCIALS } from './contact'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
+// Same targets as the navbar's links (About → the team, as there). On phones this menu is the only navigation.
 const LINKS = [
   { label: 'Work', href: '#work' },
   { label: 'Capabilities', href: '#capabilities' },
-  { label: 'About', href: '#about' },
+  { label: 'About', href: '#team' },
   { label: 'Contact', href: '#contact' },
 ]
-
-const SOCIALS = [
-  { label: 'Instagram', href: 'https://instagram.com' },
-  { label: 'LinkedIn', href: 'https://linkedin.com' },
-  { label: 'Dribbble', href: 'https://dribbble.com' },
-]
-
-const EMAIL = 'hello@rootlabs.studio'
 
 type MenuToggleProps = {
   open: boolean
@@ -31,7 +25,8 @@ export function MenuToggle({ open, onToggle }: MenuToggleProps) {
       aria-expanded={open}
       aria-controls="navigation-overlay"
       aria-label={open ? 'Close menu' : 'Open menu'}
-      className="group flex items-center gap-3 text-xs uppercase tracking-spaced text-paper"
+      // hit-area: the label is 16px tall; taps land anywhere in a 44px box around it.
+      className="hit-area group flex items-center gap-3 text-xs uppercase tracking-spaced text-paper"
     >
       <span className="relative block h-[1.2em] overflow-hidden">
         <motion.span
@@ -132,8 +127,10 @@ export function NavigationOverlay({ onClose }: NavigationOverlayProps) {
       animate="visible"
       exit={reduceMotion ? undefined : 'exit'}
     >
-      {/* gap-px leaves room for each tile's 1px ring to form the grid lines */}
-      <div className="grid min-h-dvh grid-cols-1 grid-rows-[auto_repeat(4,minmax(0,1fr))_auto] gap-px md:grid-cols-6 md:grid-rows-[auto_1fr_1fr_auto]">
+      {/* gap-px leaves room for each tile's 1px ring to form the grid lines. Link rows share the free height but
+          never shrink below their content: on a short screen the menu grows past it and scrolls instead of the
+          labels spilling over the tile edges. */}
+      <div className="grid min-h-dvh grid-cols-1 grid-rows-[auto_repeat(4,minmax(min-content,1fr))_auto] gap-px md:grid-cols-6 md:grid-rows-[auto_1fr_1fr_auto]">
         <motion.div
           variants={tileVariants}
           className={`${TILE} flex items-center px-6 py-5 text-xs uppercase tracking-spaced text-paper/50 md:col-span-6 md:px-16 md:py-8`}
@@ -185,7 +182,7 @@ export function NavigationOverlay({ onClose }: NavigationOverlayProps) {
                   href={social.href}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-paper/70 transition-colors hover:text-paper"
+                  className="hit-area text-paper/70 transition-colors hover:text-paper"
                 >
                   {social.label}
                 </a>
@@ -201,7 +198,7 @@ export function NavigationOverlay({ onClose }: NavigationOverlayProps) {
           <span className="text-xs uppercase tracking-spaced text-paper/40">Contact</span>
           <a
             href={`mailto:${EMAIL}`}
-            className="text-sm text-paper/70 transition-colors hover:text-paper"
+            className="hit-area w-fit text-sm text-paper/70 transition-colors hover:text-paper"
           >
             {EMAIL}
           </a>

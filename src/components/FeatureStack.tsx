@@ -1,15 +1,56 @@
-import { frame, motion, useMotionValueEvent, useReducedMotion, useScroll, useTransform, type MotionValue } from 'framer-motion'
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
+import {
+  frame,
+  interpolate,
+  motion,
+  useMotionValue,
+  useMotionValueEvent,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+  type MotionValue,
+} from 'framer-motion'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { FLOW_BG as BG, flowGrid } from './flowField'
+import { PHONE_PORTRAIT, useMediaQuery } from './media'
 
-// Yellow feature-stack section after the cream Features block: a sticky headline on the left, and on the right a
+// Feature-stack section after Square Share and the Bridge, dressed in the RootFlow sub-brand (navy ink, blueprint grid,
+// royal-blue cards, gold accents; Syne display + Geist text): a sticky headline on the left, and on the right a
 // deck of UI-mock cards that the page scroll deals one by one. The section is one viewport tall per card; the
 // stage inside it is sticky, and scroll offset (in cards) drives every card's transform, so the motion is fully
 // scrubbed. Each card step carries its own data-snap marker, so a finished gesture settles on exactly one card.
 
-const BG = '#4445a2'
-const PANEL = '#b19fff'
+// The pinned stage's backdrop: RootFlow's blueprint grid (120px major / 24px minor) under a royal-blue glow behind
+// the deck and a faint gold bloom.
+const GRID = flowGrid()
+const FIELD = [
+  'radial-gradient(70% 80% at 100% 0%, rgba(26,62,150,0.55) 0%, rgba(20,44,112,0.22) 40%, transparent 72%)',
+  'radial-gradient(40% 46% at 76% 48%, rgba(203,163,74,0.08), transparent 72%)',
+  ...GRID,
+  BG,
+].join(', ')
 
-type PanelKind = 'browser' | 'scores' | 'components' | 'flow' | 'pipeline' | 'code' | 'chart' | 'services'
+// Edges: BridgeSection, above, ends in this stage's own field (navy, the top-right glow and the grid's lines carried
+// on), so the stage picks it up with no edge; below, ContactSection fades the field out into its ink (flowField's
+// edge band).
+
+// Card surface: the deep royal panel with the brighter blue bloom in its top-right corner. Fully opaque, because
+// it is the front face of a 3D box.
+const CARD_BG = [
+  'radial-gradient(120% 110% at 100% 0%, rgba(26,62,150,0.85) 0%, rgba(20,44,112,0.45) 38%, transparent 72%)',
+  'linear-gradient(160deg, #111b3e 0%, #0c142e 55%, #0d1838 100%)',
+].join(', ')
+
+// Preview well: dot grid + a low gold bloom, like the radar panel on rootflow.cz.
+const PANEL_BG = [
+  'radial-gradient(52% 46% at 58% 42%, rgba(222,172,92,0.16), transparent 72%)',
+  'radial-gradient(rgba(226,232,244,0.14) 1px, transparent 1.3px) 0 0 / 2.4cqw 2.4cqw',
+  'rgba(6,9,18,0.55)',
+].join(', ')
+const PANEL_INNER_BG = 'linear-gradient(180deg, #16213a, #0b1222)'
+
+const GOLD = 'linear-gradient(180deg, #fed495 0%, #e6b85f 45%, #c08b3e 100%)'
+
+type PanelKind = 'inbox' | 'activity' | 'radar' | 'receivables' | 'pipeline' | 'tools' | 'chart' | 'report'
 
 type Feature = {
   title: string
@@ -18,39 +59,79 @@ type Feature = {
   panels: [PanelKind, PanelKind]
 }
 
+// Card copy follows rootflow.cz (in English): the office routine the system takes over — it handles what comes
+// in, watches what would slip, connects the tools a company already uses, and turns the numbers into a report.
 const FEATURES: Feature[] = [
   {
-    title: 'Web Platforms',
-    body: 'Fast, content-driven sites and web apps built to grow with your team.',
+    title: 'Back Office',
+    body: 'Orders, invoices and inquiries go from email straight into your systems.',
     glyph: <StripeGlyph />,
-    panels: ['browser', 'scores'],
+    panels: ['inbox', 'activity'],
   },
   {
-    title: 'Product Design',
-    body: 'Interfaces and design systems grounded in how people actually work.',
+    title: 'Monitoring',
+    body: 'Payments, deadlines and competitor prices, watched so nothing slips.',
     glyph: <SplitGlyph />,
-    panels: ['components', 'flow'],
+    panels: ['radar', 'receivables'],
   },
   {
-    title: 'Automation',
-    body: 'Connect your tools and remove the busywork with custom workflows.',
+    title: 'Integrations',
+    body: 'E-shop, stock and accounting in sync, using the tools you already have.',
     glyph: <StackGlyph />,
-    panels: ['pipeline', 'code'],
+    panels: ['pipeline', 'tools'],
   },
   {
-    title: 'Infrastructure',
-    body: 'Hosting, CI/CD and monitoring that quietly keeps everything running.',
+    title: 'Reporting',
+    body: 'A Monday email with revenue, receivables and anything that looks off.',
     glyph: <GridGlyph />,
-    panels: ['chart', 'services'],
+    panels: ['chart', 'report'],
   },
 ]
 
 const COUNT = FEATURES.length
 const pad = (n: number) => String(n).padStart(2, '0')
 
+// Phones held upright have no room for headline and deck side by side: the headline moves to the top, the deck
+// sits under it, and the next card waits parked low with its header showing. Where it parks depends on the real
+// screen height, so it is measured (px) rather than a fixed share of the viewport: PEEK of the card's width stays
+// visible above the bottom edge (enough for its counter strip and title), and it never parks closer than
+// PARK_GAP below the focused card.
+const PEEK = 0.3
+const PARK_GAP = 24 // px
+
 export function FeatureStack() {
   const trackRef = useRef<HTMLElement>(null)
   const still = useReducedMotion() ?? false
+  const stacked = useMediaQuery(PHONE_PORTRAIT)
+
+  // Phone geometry for the deck's poses, in px: how far below the focused card the waiting card parks, and the
+  // height of the screen. 0 while side by side (the poses are then in vh).
+  const deckRef = useRef<HTMLDivElement>(null)
+  const parkedY = useMotionValue(0)
+  const screenH = useMotionValue(0)
+  useLayoutEffect(() => {
+    const deck = deckRef.current
+    if (!stacked || !deck) {
+      screenH.set(0)
+      return
+    }
+    const measure = () => {
+      // The smallest viewport (browser toolbars showing): stable while they collapse, and the card peeks either way.
+      const view = document.documentElement.clientHeight
+      const cardHeight = (deck.firstElementChild as HTMLElement | null)?.offsetHeight ?? 0
+      parkedY.set(Math.max(view - deck.offsetTop - deck.offsetWidth * PEEK, cardHeight + PARK_GAP))
+      screenH.set(view)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(deck)
+    if (deck.firstElementChild) observer.observe(deck.firstElementChild)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [stacked, parkedY, screenH])
 
   // 0 → COUNT-1 while the stage is pinned: the index of the card in focus, fractional between cards.
   const { scrollYProgress } = useScroll({ target: trackRef, offset: ['start start', 'end end'] })
@@ -69,9 +150,11 @@ export function FeatureStack() {
   return (
     <section
       ref={trackRef}
+      id="work"
       data-snap="start"
-      className="relative z-20 text-charcoal"
-      style={{ height: `${COUNT * 100}dvh`, backgroundColor: BG }}
+      className="relative z-20 font-geist text-flow-chalk"
+      // svh: the track's length is fixed, so the page below doesn't shift as a phone's toolbar collapses.
+      style={{ height: `${COUNT * 100}svh`, backgroundColor: BG }}
     >
       {/* One snap point per card after the first (the section's own top covers card 01). */}
       {FEATURES.slice(1).map((f, i) => (
@@ -80,16 +163,23 @@ export function FeatureStack() {
           aria-hidden
           data-snap="start"
           className="pointer-events-none absolute inset-x-0 h-px"
-          style={{ top: `${(i + 1) * 100}dvh` }}
+          style={{ top: `${(i + 1) * 100}svh` }}
         />
       ))}
 
       <div ref={stageRef} className="sticky top-0 h-dvh overflow-hidden">
+        {/* Blueprint backdrop, pinned with the stage so the grid holds still while the deck moves over it. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: FIELD }}>
+          <GridAccents />
+        </div>
+
         {/* Card deck. Perspective lives on the wrapper so every card tilts around the same vanishing point, set
             above and right of the deck so the boxes read from their top and right faces. It's also the size
-            container the box depth (cqw) is measured against, so depth stays proportional to card width. */}
+            container the box depth (cqw) is measured against, so depth stays proportional to card width.
+            Side by side it is capped by height too, so a phone on its side still fits a whole card under the nav. */}
         <div
-          className="@container absolute inset-x-6 top-[10vh] md:inset-x-auto md:right-[7vw] md:top-[14vh] md:w-[38vw]"
+          ref={deckRef}
+          className="@container absolute right-[7vw] top-[max(14vh,5rem)] w-[min(38vw,80svh)] phone:inset-x-6 phone:top-[11.5rem] phone:w-auto"
           style={{ perspective: 1600, perspectiveOrigin: '75% -20%' }}
         >
           {FEATURES.map((feature, i) => (
@@ -98,6 +188,8 @@ export function FeatureStack() {
               feature={feature}
               index={i}
               step={deckStep}
+              parkedY={parkedY}
+              screenH={screenH}
               still={still}
               anchorRef={(corner) => (el) => {
                 anchors.current[i][corner] = el
@@ -108,15 +200,17 @@ export function FeatureStack() {
 
         <Wires stageRef={stageRef} anchors={anchors} step={deckStep} still={still} />
 
-        {/* Pinned headline, bottom-left above the fixed brand bar. */}
-        <div className="absolute bottom-28 left-6 md:left-12">
-          <span className="mb-3 inline-block rounded-full border-2 border-charcoal px-3 pb-0.5 text-xl font-medium tracking-tight md:text-3xl">
+        {/* Pinned headline, bottom-left above the fixed brand bar; on upright phones, top-left above the deck. */}
+        <div className="absolute bottom-28 left-6 md:left-12 phone:bottom-auto phone:top-[4.5rem]">
+          <span className="mb-3 inline-flex items-center gap-[0.4em] rounded-full border border-flow-line-2 bg-flow-ink/55 px-3 pb-0.5 pt-px text-xl font-medium tracking-tight text-flow-muted backdrop-blur-sm md:text-3xl">
+            <span
+              aria-hidden
+              className="size-[0.3em] rounded-full bg-flow-amber shadow-[0_0_0_0.18em_rgb(203_163_74/0.16),0_0_0.7em_rgb(203_163_74/0.7)]"
+            />
             Engineering
           </span>
-          <h2 className="text-white text-[clamp(3.25rem,7.4vw,9rem)] font-semibold leading-[0.9] tracking-[-0.045em]">
-            We build
-            <br />
-            the systems
+          <h2 className="font-syne text-[clamp(3.25rem,7.4vw,9rem)] font-semibold leading-[0.95] tracking-[-0.035em] text-flow-chalk [text-shadow:0_0_28px_rgb(7_9_21/0.92),0_2px_10px_rgb(7_9_21/0.7)]">
+            Root<span className="text-flow-gold">Flow</span>
           </h2>
         </div>
       </div>
@@ -128,21 +222,36 @@ export function FeatureStack() {
 //   one card ahead  → parked low, tipped back and turned so its top and right faces show, header peeking above the fold
 //   in focus        → nearly square-on, with a hair of rotation so a sliver of the right face keeps it solid
 //   one card behind → flipped back and away up-left, fading out (the next card slides over it)
+// Vertical poses side by side, in vh: two ahead (off-screen below), parked, in focus, gone.
+const POSE_Y_VH = [115, 74, 0, -62]
+
 function DeckCard({
   feature,
   index,
   step,
+  parkedY,
+  screenH,
   still,
   anchorRef,
 }: {
   feature: Feature
   index: number
   step: MotionValue<number>
+  parkedY: MotionValue<number>
+  screenH: MotionValue<number>
   still: boolean
   anchorRef: (corner: number) => (el: HTMLElement | null) => void
 }) {
   const range = [index - 2, index - 1, index, index + 1]
-  const y = useTransform(step, range, ['115vh', '74vh', '0vh', '-62vh'])
+  const [sideBySideY] = useState(() => interpolate(range, POSE_Y_VH))
+  // Stacked on a phone (screenH set): the same four poses, in px around the measured parking spot.
+  const y = useTransform(() => {
+    const s = step.get()
+    const view = screenH.get()
+    if (!view) return `${sideBySideY(s)}vh`
+    const parked = parkedY.get()
+    return `${interpolate(range, [parked + view * 0.5, parked, 0, -view * 0.7])(s)}px`
+  })
   const x = useTransform(step, range, ['0vw', '0vw', '0vw', still ? '0vw' : '-12vw'])
   // +X tips the top away (shows the top face); −Y swings the right edge forward (shows the right face).
   const rotateX = useTransform(step, range, still ? [0, 0, 0, 0] : [36, 30, 3, 38])
@@ -196,8 +305,10 @@ const WIRES: [number, number][] = [
   [3, 1],
   [3, 0],
 ]
-const WIRE_COLOR = '#ffffff'
-const WIRE_OPACITY = 0.55
+const WIRE_COLOR = '#cba34a'
+const WIRE_OPACITY = 0.6
+// Wire ends are drawn as RootFlow's hollow square grid nodes / selection handles rather than round dots.
+const NODE = 6
 
 function Wires({
   stageRef,
@@ -211,7 +322,7 @@ function Wires({
   still: boolean
 }) {
   const paths = useRef<(SVGPathElement | null)[]>([])
-  const dots = useRef<(SVGCircleElement | null)[]>([])
+  const dots = useRef<(SVGRectElement | null)[]>([])
 
   const update = () => {
     const stage = stageRef.current
@@ -251,12 +362,12 @@ function Wires({
         path.setAttribute('d', `M ${ax} ${ay} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${bx} ${by}`)
         path.style.opacity = String(visible * WIRE_OPACITY)
       })
-      // Terminal dots on the four corners this pair uses.
+      // Terminal nodes on the four corners this pair uses.
       ;[points[pair][2], points[pair][3], points[pair + 1][0], points[pair + 1][1]].forEach(([x, y], k) => {
         const dot = dots.current[pair * 4 + k]
         if (!dot) return
-        dot.setAttribute('cx', String(x))
-        dot.setAttribute('cy', String(y))
+        dot.setAttribute('x', String(x - NODE / 2))
+        dot.setAttribute('y', String(y - NODE / 2))
         dot.style.opacity = String(visible)
       })
     }
@@ -286,13 +397,16 @@ function Wires({
         />
       ))}
       {Array.from({ length: (COUNT - 1) * 4 }, (_, n) => (
-        <circle
+        <rect
           key={n}
           ref={(el) => {
             dots.current[n] = el
           }}
-          r={2.5}
-          fill={WIRE_COLOR}
+          width={NODE}
+          height={NODE}
+          fill={BG}
+          stroke={WIRE_COLOR}
+          strokeWidth={1}
           style={{ opacity: 0 }}
         />
       ))}
@@ -309,8 +423,8 @@ const DEPTH = '9cqw'
 const HALF_DEPTH = '4.5cqw'
 
 // Lit from the top right: top brightest, right face mid, left and bottom in shadow. Each side runs from lighter
-// at the front edge to darker at the back so the 90° corner against the white front reads crisply.
-const EDGE = 'inset 0 0 0 1px rgba(255,255,255,0.6)'
+// at the front edge to darker at the back so the 90° corner against the navy front reads crisply.
+const EDGE = 'inset 0 0 0 1px rgba(226,232,244,0.05)'
 
 type FaceSpec = { name: string; className: string; transform: string; origin: string; background: string; size: 'w' | 'h' | 'full' }
 
@@ -321,7 +435,7 @@ const BOX_FACES: FaceSpec[] = [
     size: 'h',
     origin: '50% 100%',
     transform: `translateZ(${HALF_DEPTH}) rotateX(90deg)`,
-    background: 'linear-gradient(to top, #ffffff, #f4e7c8)',
+    background: 'linear-gradient(to top, #243c70, #15264a)',
   },
   {
     name: 'right',
@@ -329,7 +443,7 @@ const BOX_FACES: FaceSpec[] = [
     size: 'w',
     origin: '0% 50%',
     transform: `translateZ(${HALF_DEPTH}) rotateY(90deg)`,
-    background: 'linear-gradient(to right, #fff8ea, #e2d3b1)',
+    background: 'linear-gradient(to right, #1a2d58, #0e1a36)',
   },
   {
     name: 'left',
@@ -337,7 +451,7 @@ const BOX_FACES: FaceSpec[] = [
     size: 'w',
     origin: '100% 50%',
     transform: `translateZ(${HALF_DEPTH}) rotateY(-90deg)`,
-    background: 'linear-gradient(to left, #efe2c4, #c9b893)',
+    background: 'linear-gradient(to left, #121d3c, #0a1226)',
   },
   {
     name: 'bottom',
@@ -345,7 +459,7 @@ const BOX_FACES: FaceSpec[] = [
     size: 'h',
     origin: '50% 0%',
     transform: `translateZ(${HALF_DEPTH}) rotateX(-90deg)`,
-    background: 'linear-gradient(to bottom, #dccca8, #b8a57f)',
+    background: 'linear-gradient(to bottom, #0d1630, #080d1d)',
   },
   {
     name: 'back',
@@ -353,7 +467,7 @@ const BOX_FACES: FaceSpec[] = [
     size: 'full',
     origin: '50% 50%',
     transform: `translateZ(-${HALF_DEPTH}) rotateY(180deg)`,
-    background: 'linear-gradient(135deg, #f4e7c8, #d6c49f)',
+    background: 'linear-gradient(135deg, #111b3e, #0b1226)',
   },
 ]
 
@@ -387,7 +501,7 @@ function Face({
       }}
     >
       <motion.div
-        className={size ? 'size-full border border-charcoal' : ''}
+        className={size ? 'size-full border border-flow-line-2' : ''}
         style={{ opacity, background, boxShadow: size ? EDGE : undefined }}
       >
         {children}
@@ -398,27 +512,43 @@ function Face({
 
 function FeatureCard({ feature, index }: { feature: Feature; index: number }) {
   return (
-    <div className="@container border border-charcoal bg-white shadow-[0_30px_60px_-30px_rgba(34,32,31,0.45)]">
+    <div
+      className="@container relative border border-flow-line-2 text-flow-chalk shadow-[inset_0_1px_0_rgb(226_232_244/0.08),0_40px_80px_-48px_rgb(0_0_0/0.9)]"
+      style={{ background: CARD_BG }}
+    >
+      {/* Gold glint along the top edge, like the lit segments on RootFlow's grid lines. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -top-px left-[18%] h-px w-[46%] bg-gradient-to-r from-transparent via-flow-amber to-transparent"
+      />
+
       {/* Counter strip */}
-      <div className="flex border-b border-charcoal text-[3.4cqw] leading-none">
-        <span className="border-r border-charcoal px-[2cqw] py-[1.8cqw]">{pad(index + 1)}</span>
-        <span className="border-r border-charcoal px-[2cqw] py-[1.8cqw]">{pad(COUNT)}</span>
+      <div className="flex border-b border-flow-line text-[3.4cqw] leading-none tabular-nums">
+        <span className="border-r border-flow-line px-[2cqw] py-[1.8cqw] text-flow-amber">{pad(index + 1)}</span>
+        <span className="border-r border-flow-line px-[2cqw] py-[1.8cqw] text-flow-faint">{pad(COUNT)}</span>
       </div>
 
       {/* Glyph column + copy */}
       <div className="grid grid-cols-[13cqw_1fr]">
-        <div className="border-r border-charcoal p-[2.4cqw]">{feature.glyph}</div>
+        <div className="border-r border-flow-line p-[2.4cqw]">{feature.glyph}</div>
         <div className="px-[2.4cqw] pb-[4cqw] pt-[1.6cqw]">
-          <h3 className="text-[9.4cqw] font-semibold leading-[0.95] tracking-[-0.04em]">{feature.title}</h3>
-          <p className="mt-[2.4cqw] max-w-[80%] text-[3.7cqw] leading-[1.2]">{feature.body}</p>
+          <h3 className="font-syne text-[9.4cqw] font-semibold leading-[0.95] tracking-[-0.045em]">{feature.title}</h3>
+          <p className="mt-[2.4cqw] max-w-[80%] text-[3.7cqw] leading-[1.2] text-flow-muted">{feature.body}</p>
         </div>
       </div>
 
       {/* Preview sub-panels */}
       <div className="grid grid-cols-2 gap-[2cqw] px-[2cqw] pb-[2cqw]">
         {feature.panels.map((kind) => (
-          <div key={kind} className="aspect-[1/0.95] overflow-hidden pl-[4cqw] pt-[4cqw]" style={{ backgroundColor: PANEL }}>
-            <div className="h-full border-l border-t border-charcoal/30 bg-white p-[2.4cqw] text-[1.9cqw] leading-tight">
+          <div
+            key={kind}
+            className="aspect-[1/0.95] overflow-hidden rounded-[1.6cqw] border border-flow-line pl-[4cqw] pt-[4cqw]"
+            style={{ background: PANEL_BG }}
+          >
+            <div
+              className="h-full rounded-tl-[1.2cqw] border-l border-t border-flow-line-2 p-[2.4cqw] text-[1.9cqw] leading-tight shadow-[inset_0_1px_0_rgb(226_232_244/0.08)]"
+              style={{ background: PANEL_INNER_BG }}
+            >
               <MockPanel kind={kind} />
             </div>
           </div>
@@ -429,17 +559,31 @@ function FeatureCard({ feature, index }: { feature: Feature; index: number }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Glyphs: blunt black marks for the card's left column.
+// Glyphs: blunt marks for the card's left column, filled with RootFlow's gold gradient. The gradient spans the
+// whole 40×40 glyph (userSpaceOnUse) so multi-part marks shade as one piece.
+
+const GLYPH_GLOW = 'drop-shadow(0 0 1.4cqw rgba(203,163,74,0.35))'
+
+function GoldFill({ id }: { id: string }) {
+  return (
+    <linearGradient id={id} gradientUnits="userSpaceOnUse" x1="0" y1="2" x2="0" y2="38">
+      <stop offset="0.08" stopColor="#ffe0a6" />
+      <stop offset="0.52" stopColor="#ebbc62" />
+      <stop offset="1" stopColor="#c48d40" />
+    </linearGradient>
+  )
+}
 
 function StripeGlyph() {
   return (
-    <svg viewBox="0 0 40 40" className="w-full">
+    <svg viewBox="0 0 40 40" className="w-full" style={{ filter: GLYPH_GLOW }}>
       <defs>
         <clipPath id="fs-stripe">
           <circle cx="20" cy="20" r="19" />
         </clipPath>
+        <GoldFill id="fs-gold-stripe" />
       </defs>
-      <g clipPath="url(#fs-stripe)" fill="#22201f">
+      <g clipPath="url(#fs-stripe)" fill="url(#fs-gold-stripe)">
         {[3, 11, 19, 27, 35].map((y) => (
           <rect key={y} x="0" y={y - 2.5} width="40" height="5" />
         ))}
@@ -450,7 +594,10 @@ function StripeGlyph() {
 
 function SplitGlyph() {
   return (
-    <svg viewBox="0 0 40 40" className="w-full" fill="#22201f">
+    <svg viewBox="0 0 40 40" className="w-full" fill="url(#fs-gold-split)" style={{ filter: GLYPH_GLOW }}>
+      <defs>
+        <GoldFill id="fs-gold-split" />
+      </defs>
       <rect x="2" y="4" width="5" height="32" />
       <rect x="10" y="4" width="28" height="32" />
     </svg>
@@ -459,7 +606,10 @@ function SplitGlyph() {
 
 function StackGlyph() {
   return (
-    <svg viewBox="0 0 40 40" className="w-full" fill="#22201f">
+    <svg viewBox="0 0 40 40" className="w-full" fill="url(#fs-gold-stack)" style={{ filter: GLYPH_GLOW }}>
+      <defs>
+        <GoldFill id="fs-gold-stack" />
+      </defs>
       <rect x="6" y="3" width="28" height="3" />
       <rect x="4" y="9" width="32" height="3" />
       <rect x="2" y="15" width="36" height="22" />
@@ -469,84 +619,176 @@ function StackGlyph() {
 
 function GridGlyph() {
   return (
-    <svg viewBox="0 0 40 40" className="w-full" fill="#22201f">
+    <svg viewBox="0 0 40 40" className="w-full" fill="url(#fs-gold-grid)" style={{ filter: GLYPH_GLOW }}>
+      <defs>
+        <GoldFill id="fs-gold-grid" />
+      </defs>
       {[2, 21].flatMap((x) => [2, 21].map((y) => <rect key={`${x}${y}`} x={x} y={y} width="17" height="17" />))}
     </svg>
   )
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Tiny product-UI mocks for the preview panels. All sizing is in the card's cqw so they scale with it.
+// Blueprint accents on the stage grid: hollow square nodes on a few intersections and gold glints running along a
+// few lines, as on rootflow.cz. Coordinates are in grid cells (120px), so they land exactly on the drawn lines.
 
-function Bar({ w, className = 'bg-charcoal/15' }: { w: string; className?: string }) {
-  return <div className={`h-[1.2cqw] rounded-full ${className}`} style={{ width: w }} />
+const CELL = 120
+const GRID_NODES: [number, number][] = [
+  [2, 1], [5, 1], [9, 1], [1, 3], [7, 3], [11, 2], [4, 5], [10, 5], [6, 6],
+]
+// [axis, line index, from cell, to cell]
+const GRID_GLINTS: ['h' | 'v', number, number, number][] = [
+  ['h', 1, 2, 5],
+  ['v', 7, 1, 3],
+  ['h', 5, 8, 11],
+  ['h', 3, 0, 2],
+]
+
+function GridAccents() {
+  return (
+    <>
+      {GRID_GLINTS.map(([axis, line, from, to]) => (
+        <span
+          key={`${axis}${line}${from}`}
+          className={`absolute from-transparent via-flow-amber/70 to-transparent ${axis === 'h' ? 'h-px bg-gradient-to-r' : 'w-px bg-gradient-to-b'}`}
+          style={
+            axis === 'h'
+              ? { top: line * CELL - 0.5, left: from * CELL, width: (to - from) * CELL }
+              : { left: line * CELL - 0.5, top: from * CELL, height: (to - from) * CELL }
+          }
+        />
+      ))}
+      {GRID_NODES.map(([col, row]) => (
+        <span
+          key={`${col}-${row}`}
+          className="absolute size-[7px] border border-flow-line-2 bg-flow-ink"
+          style={{ left: col * CELL - 3.5, top: row * CELL - 3.5 }}
+        />
+      ))}
+    </>
+  )
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tiny product-UI mocks for the preview panels, drawn from what rootflow.cz shows the system doing (the hero's
+// "System handled" feed, the competitor price radar, the Monday owner report). All sizing is in the card's cqw so
+// they scale with it.
+
+const AMBER_DOT = 'shrink-0 rounded-full bg-flow-amber shadow-[0_0_0_0.5cqw_rgb(203_163_74/0.16),0_0_1.4cqw_rgb(203_163_74/0.7)]'
 
 function PanelTitle({ children }: { children: ReactNode }) {
   return <div className="mb-[1.6cqw] text-[2.3cqw] font-semibold">{children}</div>
 }
 
+function Row({ children }: { children: ReactNode }) {
+  return <div className="flex items-center justify-between gap-[1cqw] border-b border-flow-line pb-[1cqw]">{children}</div>
+}
+
+function Pill({ on = false, children }: { on?: boolean; children: ReactNode }) {
+  return (
+    <span
+      className={`whitespace-nowrap rounded-full px-[1cqw] py-[0.3cqw] inset-ring ${on ? 'bg-flow-amber/15 text-flow-amber inset-ring-flow-amber/40' : 'bg-flow-chalk/5 text-flow-faint inset-ring-flow-line-2'}`}
+    >
+      {children}
+    </span>
+  )
+}
+
 function MockPanel({ kind }: { kind: PanelKind }) {
   switch (kind) {
-    case 'browser':
+    case 'inbox':
       return (
         <div>
-          <div className="mb-[2cqw] flex items-center gap-[0.8cqw]">
-            {[0, 1, 2].map((n) => (
-              <span key={n} className="size-[1.2cqw] rounded-full bg-charcoal/25" />
+          <PanelTitle>Inbox</PanelTitle>
+          <div className="space-y-[1.2cqw]">
+            {[
+              ['Order #2041', 'Pohoda'],
+              ['Supplier invoice', 'Accounts'],
+              ['Complaint', 'Filed'],
+              ['New inquiry', 'CRM'],
+            ].map(([item, to]) => (
+              <Row key={item}>
+                <span className="flex items-center gap-[1cqw]">
+                  <span className={`size-[1.2cqw] ${AMBER_DOT}`} />
+                  {item}
+                </span>
+                <span className="whitespace-nowrap text-flow-faint">→ {to}</span>
+              </Row>
             ))}
-            <span className="ml-[1cqw] h-[1.8cqw] flex-1 rounded-full bg-charcoal/10" />
-          </div>
-          <div className="mb-[1.6cqw] h-[11cqw] rounded-[0.8cqw] bg-gradient-to-br from-[#f4b93e] to-[#f36cf2]" />
-          <div className="space-y-[1cqw]">
-            <Bar w="80%" className="bg-charcoal/70" />
-            <Bar w="60%" />
-            <Bar w="70%" />
           </div>
         </div>
       )
-    case 'scores':
+    case 'activity':
       return (
         <div>
-          <PanelTitle>Performance</PanelTitle>
-          <div className="grid grid-cols-2 gap-[2cqw]">
-            {[99, 100, 98, 100].map((score, n) => (
-              <div key={n} className="grid aspect-square place-items-center rounded-full border-[0.7cqw] border-[#3fbf6b] font-semibold">
-                {score}
+          <PanelTitle>System handled</PanelTitle>
+          <div className="space-y-[1.8cqw]">
+            {[
+              ['Invoice issued', 'From the timesheet, no retyping'],
+              ['Documents requested', 'Client knows what’s missing'],
+              ['Reminder sent', 'Right after the due date'],
+            ].map(([what, note]) => (
+              <div key={what} className="flex gap-[1.2cqw]">
+                <span
+                  className="grid size-[2.6cqw] shrink-0 place-items-center rounded-full text-[1.5cqw] font-bold text-flow-ink shadow-[0_0_1.6cqw_-0.2cqw_rgb(203_163_74/0.6)]"
+                  style={{ background: GOLD }}
+                >
+                  ✓
+                </span>
+                <div>
+                  <div className="font-semibold">{what}</div>
+                  <div className="text-flow-faint">{note}</div>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )
-    case 'components':
+    case 'radar':
       return (
         <div>
-          <PanelTitle>Components</PanelTitle>
-          <div className="mb-[1.6cqw] flex gap-[1cqw]">
-            <span className="rounded-full bg-[#7a5cf0] px-[1.6cqw] py-[0.6cqw] text-white">Primary</span>
-            <span className="rounded-full border border-charcoal/40 px-[1.6cqw] py-[0.6cqw]">Ghost</span>
+          <PanelTitle>Price radar</PanelTitle>
+          <div className="space-y-[1.2cqw]">
+            {['A', 'B', 'C', 'D'].map((id) => {
+              const moved = id === 'C'
+              return (
+                <Row key={id}>
+                  <span className="flex items-center gap-[1cqw]">
+                    <span
+                      className={`grid size-[2.4cqw] shrink-0 place-items-center rounded-[0.4cqw] border text-[1.5cqw] font-semibold ${moved ? 'border-flow-amber text-flow-amber' : 'border-flow-line-2 text-flow-faint'}`}
+                    >
+                      {id}
+                    </span>
+                    Competitor {id}
+                  </span>
+                  <Pill on={moved}>{moved ? 'New promo' : 'No change'}</Pill>
+                </Row>
+              )
+            })}
           </div>
-          <div className="mb-[1.6cqw] rounded-[0.6cqw] border border-charcoal/20 px-[1.2cqw] py-[1cqw] text-charcoal/50">
-            Search…
-          </div>
-          <div className="grid grid-cols-4 gap-[0.8cqw]">
-            {['#22201f', '#7a5cf0', '#b19fff', '#f4b93e', '#f36cf2', '#b5ff4f', '#fff1d3', '#e5e5e5'].map((c) => (
-              <span key={c} className="aspect-square rounded-[0.5cqw] border border-charcoal/10" style={{ background: c }} />
-            ))}
-          </div>
+          <div className="mt-[1.6cqw] text-flow-amber">✉ Alert emailed instantly</div>
         </div>
       )
-    case 'flow':
+    case 'receivables':
       return (
-        <div className="relative h-full">
-          <PanelTitle>User flow</PanelTitle>
-          <div className="flex flex-col items-start gap-[2.4cqw]">
-            {['Sign up', 'Onboarding', 'Dashboard'].map((label, n) => (
-              <div key={label} className="flex items-center gap-[1cqw]" style={{ marginLeft: `${n * 5}cqw` }}>
-                <span className="size-[1.6cqw] rounded-full bg-[#7a5cf0]" />
-                <span className="rounded-[0.6cqw] border border-charcoal/30 px-[1.2cqw] py-[0.6cqw]">{label}</span>
-              </div>
+        <div>
+          <PanelTitle>Receivables</PanelTitle>
+          <div className="space-y-[1.2cqw]">
+            {[
+              { id: 'INV-0412', state: 'Reminded', on: true },
+              { id: 'INV-0399', state: 'Disputed → you', on: true },
+              { id: 'INV-0415', state: 'Due Fri', on: false },
+              { id: 'INV-0408', state: 'Paid', on: false },
+            ].map(({ id, state, on }) => (
+              <Row key={id}>
+                <span className="font-mono">{id}</span>
+                <Pill on={on}>{state}</Pill>
+              </Row>
             ))}
+          </div>
+          <div className="mt-[1.6cqw] flex justify-between">
+            <span className="text-flow-faint">Overdue</span>
+            <span className="font-semibold tabular-nums">48,200 CZK</span>
           </div>
         </div>
       )
@@ -556,56 +798,72 @@ function MockPanel({ kind }: { kind: PanelKind }) {
           <PanelTitle>Workflows</PanelTitle>
           <div className="space-y-[1.2cqw]">
             {[
-              ['New lead → CRM', 'Live'],
-              ['Invoice → Slack', 'Live'],
-              ['Form → Sheet', 'Draft'],
-              ['Order → Email', 'Live'],
+              ['Web form → CRM', 'Live'],
+              ['Shoptet → Pohoda', 'Live'],
+              ['Timesheet → Payroll', 'Live'],
+              ['Supplier PDF → Stock', 'Draft'],
             ].map(([name, state]) => (
-              <div key={name} className="flex items-center justify-between border-b border-charcoal/10 pb-[1cqw]">
+              <Row key={name}>
                 <span>{name}</span>
-                <span
-                  className={`rounded-full px-[1cqw] py-[0.3cqw] ${state === 'Live' ? 'bg-[#3fbf6b]/20 text-[#1d7a40]' : 'bg-charcoal/10'}`}
-                >
-                  {state}
-                </span>
-              </div>
+                <Pill on={state === 'Live'}>{state}</Pill>
+              </Row>
             ))}
           </div>
         </div>
       )
-    case 'code':
+    case 'tools':
       return (
-        <div className="-m-[2.4cqw] h-[calc(100%+4.8cqw)] bg-charcoal p-[2.4cqw] font-mono text-[#e5e5e5]">
-          <div className="text-[#b19fff]">on(&apos;order.paid&apos;)</div>
-          <div className="pl-[2cqw]">.then(sync)</div>
-          <div className="pl-[2cqw]">.then(notify)</div>
-          <div className="mt-[2cqw] text-[#3fbf6b]">✓ 1,284 runs</div>
-          <div className="text-white/40">0 failures</div>
+        <div>
+          <PanelTitle>Your tools</PanelTitle>
+          <div className="grid grid-cols-2 gap-[1cqw]">
+            {['Pohoda', 'Money S3', 'Fakturoid', 'Shoptet', 'Raynet', 'Gmail', 'Excel', 'Slack'].map((name) => (
+              <span
+                key={name}
+                className="flex items-center gap-[0.8cqw] rounded-[0.6cqw] border border-flow-line-2 bg-flow-ink/40 px-[1cqw] py-[0.8cqw]"
+              >
+                <span className={`size-[1cqw] ${AMBER_DOT}`} />
+                {name}
+              </span>
+            ))}
+          </div>
         </div>
       )
     case 'chart':
       return (
         <div className="flex h-full flex-col">
-          <PanelTitle>Requests</PanelTitle>
+          <PanelTitle>Weekly revenue</PanelTitle>
           <div className="flex flex-1 items-end gap-[0.8cqw] pb-[1cqw]">
-            {[40, 55, 35, 70, 60, 85, 65, 90, 75].map((h, n) => (
-              <span key={n} className="flex-1 rounded-t-[0.4cqw] bg-[#7a5cf0]" style={{ height: `${h}%` }} />
-            ))}
+            {[40, 55, 35, 70, 60, 85, 65, 90].map((h, n, all) => {
+              const now = n === all.length - 1
+              return (
+                <span
+                  key={n}
+                  className={`flex-1 rounded-t-[0.4cqw] ${now ? 'shadow-[0_0_2cqw_-0.4cqw_rgb(203_163_74/0.7)]' : 'bg-flow-chalk/12'}`}
+                  style={{ height: `${h}%`, background: now ? GOLD : undefined }}
+                />
+              )
+            })}
           </div>
         </div>
       )
-    case 'services':
+    case 'report':
       return (
         <div>
-          <PanelTitle>Services</PanelTitle>
-          <div className="space-y-[1.4cqw]">
-            {['api', 'web', 'worker', 'db'].map((name) => (
-              <div key={name} className="flex items-center gap-[1cqw]">
-                <span className="size-[1.4cqw] rounded-full bg-[#3fbf6b]" />
-                <span className="flex-1 font-mono">{name}</span>
-                <span className="text-charcoal/50">99.99%</span>
-              </div>
+          <PanelTitle>Monday report</PanelTitle>
+          <div className="space-y-[1.2cqw]">
+            {[
+              ['Revenue', '412k CZK'],
+              ['Receivables', '86k CZK'],
+              ['New inquiries', '23'],
+            ].map(([label, value]) => (
+              <Row key={label}>
+                <span className="text-flow-muted">{label}</span>
+                <span className="font-semibold tabular-nums">{value}</span>
+              </Row>
             ))}
+          </div>
+          <div className="mt-[1.6cqw] rounded-[0.6cqw] bg-flow-amber/15 px-[1.2cqw] py-[0.8cqw] text-flow-amber inset-ring inset-ring-flow-amber/40">
+            Order #2033 is below margin
           </div>
         </div>
       )

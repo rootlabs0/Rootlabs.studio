@@ -1,8 +1,8 @@
 import { motion, useReducedMotion, useScroll, useTransform, type MotionValue } from 'framer-motion'
 import { Fragment, useRef } from 'react'
 
-// Warm ink-on-cream grid line, opaque so it reads as the same grid continuing onto the light section.
-const LINE_ON_CREAM = '#22201f'
+// Same grid line tone as the hero (--color-line), so the grid reads as continuing onto the dark section.
+const LINE_ON_INK = '#232324'
 
 // The statement, line by line. Each word is its own span so the gaps can breathe without touching layout.
 const STATEMENT = [
@@ -31,7 +31,7 @@ function BreathingWord({ word, index, gap }: { word: string; index: number; gap:
   )
 }
 
-// Light editorial section after the purple statement: a single centred grid line continues in warm beige, an
+// Dark editorial section after the purple statement: a single centred grid line continues in the hero's line tone, an
 // About pill and a three-line statement sit on the first grid line.
 export function AboutSection() {
   const ref = useRef<HTMLElement>(null)
@@ -48,17 +48,17 @@ export function AboutSection() {
   })
 
   return (
-    <section ref={ref} data-snap="start" className="relative z-20 min-h-dvh overflow-hidden bg-cream text-charcoal">
+    <section ref={ref} data-snap="start" className="relative z-20 min-h-svh overflow-hidden bg-ink text-paper">
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-y-0 left-1/2 w-px" style={{ backgroundColor: LINE_ON_CREAM }} />
+        <div className="absolute inset-y-0 left-1/2 w-px" style={{ backgroundColor: LINE_ON_INK }} />
       </div>
 
-      {/* Cream backing so the grid lines break around the text block, as in an editorial layout. */}
+      {/* Ink backing so the grid lines break around the text block, as in an editorial layout. */}
       <motion.div
-        className="relative ml-[11.5vw] mt-[16vh] w-fit origin-left bg-cream py-4 pr-6 will-change-transform"
+        className="relative ml-[11.5vw] mt-[33vh] w-fit origin-left bg-ink py-4 pr-6 will-change-transform"
         style={{ y: statementY, scale: statementScale }}
       >
-        <span className="inline-block rounded-full border border-charcoal px-3 py-0.5 text-xs font-medium uppercase tracking-spaced-sm">
+        <span className="inline-block rounded-full border border-paper px-3 py-0.5 text-xs font-medium uppercase tracking-spaced-sm">
           About
         </span>
         <h2 className="mt-3 text-[7.92vw] font-semibold leading-[0.92] tracking-tight">
