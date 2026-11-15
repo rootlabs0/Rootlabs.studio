@@ -3,7 +3,7 @@
 import type { IconName } from './icons'
 
 /** Where the copied image files live in the public folder. */
-export const ASSET_BASE = '/showcase/squareshare'
+export const ASSET_BASE = `${import.meta.env.BASE_URL}showcase/squareshare`
 
 export const SQ = {
   name: 'Square Share',
